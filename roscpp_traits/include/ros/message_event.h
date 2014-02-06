@@ -29,9 +29,11 @@
 #ifndef ROSCPP_MESSAGE_EVENT_H
 #define ROSCPP_MESSAGE_EVENT_H
 
+#include "ros/forwards.h"
 #include "ros/time.h"
-#include <ros/datatypes.h>
+#include <ros/assert.h>
 #include <ros/message_traits.h>
+#include <ros/memfd_message.h>
 
 #include <boost/type_traits/is_void.hpp>
 #include <boost/type_traits/is_base_of.hpp>
@@ -41,9 +43,79 @@
 #include <boost/utility/enable_if.hpp>
 #include <boost/function.hpp>
 #include <boost/make_shared.hpp>
+#include <ros/message_factory.h>
 
 namespace ros
 {
+
+inline void dump_memory(void* d, size_t len)
+{
+    char* data = (char*)d;
+
+    size_t i;
+    printf("Data in [%p..%p): ",data,data+len);
+    for (i=0;i<len;i++)
+        printf("%02X ", ((unsigned char*)data)[i] );
+    printf("\n");
+}
+
+
+template<typename T>
+static void Deleter( T* ptr)
+{
+    if (ptr->mem_)
+        ptr->mem_.reset();
+}
+
+template<typename T>
+static void DeleterShmem( T* ptr)
+{
+}
+
+// TODO: this is too late. we should never create a Shmem Message in the first place!
+template<typename M>
+boost::shared_ptr<M> makeSharedPtrFromMessage(M* msg, MemfdMessage::Ptr m,
+                                              typename boost::enable_if<ros::message_traits::IsShmemReady<M> >::type*_=0)
+{
+    msg->mem_ = m;
+    return boost::shared_ptr<M>(msg, &Deleter<M>);
+}
+
+template<typename M>
+boost::shared_ptr<M> makeSharedPtrFromMessage(M* msg, MemfdMessage::Ptr m,
+                                              typename boost::disable_if<ros::message_traits::IsShmemReady<M> >::type*_=0)
+{
+    ROS_ASSERT(false);
+    return boost::shared_ptr<M>(msg);
+}
+
+template<typename M>
+struct DefaultMemfdMessageCreator
+{
+//  typedef ParameterAdapter<M>::Message PureType; // sollte bereits richtiger typ sein
+
+  boost::shared_ptr<M> operator()(MemfdMessage::Ptr m)
+  {
+    ROS_ASSERT(m);
+    ROS_ASSERT(m->size_==MemfdMessage::MAX_SIZE);
+
+    boost::interprocess::managed_external_buffer segment(boost::interprocess::open_only, m->buf_, m->size_);
+    M* msg = segment.find<M>("DATA").first;
+    ROS_ASSERT(msg != NULL);
+    return  makeSharedPtrFromMessage<M>(msg, m);
+  }
+};
+
+template<typename M>
+struct DefaultShmemMessageCreator
+{
+  boost::shared_ptr<M> operator()(const boost::uuids::uuid uuid)
+  {
+    M* msg = MessageFactory::findMessage<M>(uuid);
+    ROS_ASSERT(msg != NULL);
+    return boost::shared_ptr<M>(msg, &DeleterShmem<M>);
+  }
+};
 
 template<typename M>
 struct DefaultMessageCreator
@@ -111,7 +183,7 @@ public:
    */
   MessageEvent(const ConstMessagePtr& message)
   {
-    init(message, boost::shared_ptr<M_string>(), ros::Time::now(), true, ros::DefaultMessageCreator<Message>());
+    init(message, getConnectionHeader(message.get()), ros::Time::now(), true, ros::DefaultMessageCreator<Message>());
   }
 
   MessageEvent(const ConstMessagePtr& message, const boost::shared_ptr<M_string>& connection_header, ros::Time receipt_time)
@@ -121,7 +193,7 @@ public:
 
   MessageEvent(const ConstMessagePtr& message, ros::Time receipt_time)
   {
-    init(message, boost::shared_ptr<M_string>(), receipt_time, true, ros::DefaultMessageCreator<Message>());
+    init(message, getConnectionHeader(message.get()), receipt_time, true, ros::DefaultMessageCreator<Message>());
   }
 
   MessageEvent(const ConstMessagePtr& message, const boost::shared_ptr<M_string>& connection_header, ros::Time receipt_time, bool nonconst_need_copy, const CreateFunction& create)
@@ -224,7 +296,7 @@ private:
       return message_copy_;
     }
 
-    assert(create_);
+    ROS_ASSERT(create_);
     message_copy_ = create_();
     *message_copy_ = *message_;
 
@@ -236,6 +308,21 @@ private:
   {
     return boost::const_pointer_cast<Message>(message_);
   }
+
+  template<typename T>
+  boost::shared_ptr<ros::M_string>
+  getConnectionHeader(T* t, typename boost::enable_if<ros::message_traits::IsMessage<T> >::type*_ = 0) const
+  {
+    return t->__connection_header;
+  }
+
+  template<typename T>
+  boost::shared_ptr<ros::M_string>
+  getConnectionHeader(T* t, typename boost::disable_if<ros::message_traits::IsMessage<T> >::type*_ = 0) const
+  {
+    return boost::shared_ptr<ros::M_string>();
+  }
+
 
   ConstMessagePtr message_;
   // Kind of ugly to make this mutable, but it means we can pass a const MessageEvent to a callback and not worry about other things being modified
