@@ -28,6 +28,9 @@
 #ifndef ROSLIB_MESSAGE_FORWARD_H
 #define ROSLIB_MESSAGE_FORWARD_H
 
+#include <ros/boost_container.h>
+#include <ros/allocator.h>
+
 namespace std
 {
 template<typename T> class allocator;
@@ -48,14 +51,14 @@ template<typename T> class shared_ptr;
  */
 #define ROS_DECLARE_MESSAGE_WITH_ALLOCATOR(msg, new_name, alloc) \
   template<class Allocator> struct msg##_; \
-  typedef msg##_<alloc<void> > new_name; \
+  typedef msg##_<alloc > new_name; \
   typedef boost::shared_ptr<new_name> new_name##Ptr; \
   typedef boost::shared_ptr<new_name const> new_name##ConstPtr;
 
 /**
- * \brief Forward-declare a message, including Ptr and ConstPtr types, using std::allocator
+ * \brief Forward-declare a message, including Ptr and ConstPtr types, using our allocator
  * \param msg The "base" message type, i.e. the name of the .msg file
  */
-#define ROS_DECLARE_MESSAGE(msg) ROS_DECLARE_MESSAGE_WITH_ALLOCATOR(msg, msg, std::allocator)
+#define ROS_DECLARE_MESSAGE(msg) ROS_DECLARE_MESSAGE_WITH_ALLOCATOR(msg, msg, ros::alloc<void>::type)
 
 #endif // ROSLIB_MESSAGE_FORWARD_H

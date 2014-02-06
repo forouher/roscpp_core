@@ -36,6 +36,7 @@
 #include <boost/utility/enable_if.hpp>
 #include <boost/type_traits/remove_const.hpp>
 #include <boost/type_traits/remove_reference.hpp>
+#include <ros/boost_container.h>
 
 namespace std_msgs
 {
@@ -109,6 +110,11 @@ template<typename M> struct HasHeader : public FalseType {};
  * \brief Am I message or not
  */
 template<typename M> struct IsMessage : public FalseType {};
+
+/**
+ * \brief Can this message be used in shared memory?
+ */
+template<typename M> struct IsShmemReady : public FalseType {};
 
 /**
  * \brief Specialize to provide the md5sum for a message
