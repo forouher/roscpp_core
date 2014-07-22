@@ -23,7 +23,7 @@
 #include <boost/assert.hpp>
 #include <boost/utility/addressof.hpp>
 #include <boost/interprocess/detail/type_traits.hpp>
-#include <boost/interprocess/managed_external_buffer.hpp>
+#include <boost/interprocess/managed_shared_memory.hpp>
 
 #include <memory>
 #include <new>
@@ -246,7 +246,7 @@ namespace ros {
 template <typename value_type>
 struct alloc
 {
-    typedef boost::interprocess::ros_allocator< value_type, boost::interprocess::managed_external_buffer::segment_manager> type;
+    typedef boost::interprocess::ros_allocator< value_type, boost::interprocess::managed_shared_memory::segment_manager> type;
 };
 
 typedef alloc<void>::type void_allocator;

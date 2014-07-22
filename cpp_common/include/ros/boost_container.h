@@ -57,7 +57,7 @@ typedef size_t size_type;
 template<
     class charT,
     class Traits = std::char_traits<charT>,
-    class Allocator = boost::interprocess::ros_allocator< charT, boost::interprocess::managed_external_buffer::segment_manager>
+    class Allocator = boost::interprocess::ros_allocator< charT, boost::interprocess::managed_shared_memory::segment_manager>
 >
 class basic_string: public boost::container::basic_string<charT, Traits, Allocator>
 {
@@ -184,7 +184,7 @@ public:
                       const std::basic_string< CharT, Traits, std::allocator<CharT> > & y) {return !(x==y);};
 
 
-template<typename value_type, typename Allocator = boost::container::scoped_allocator_adaptor<boost::interprocess::ros_allocator< value_type, boost::interprocess::managed_external_buffer::segment_manager> > >
+template<typename value_type, typename Allocator = boost::container::scoped_allocator_adaptor<boost::interprocess::ros_allocator< value_type, boost::interprocess::managed_shared_memory::segment_manager> > >
 class vector: public boost::container::vector<value_type, Allocator>
 {
 public:
