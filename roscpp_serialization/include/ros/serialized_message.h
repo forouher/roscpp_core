@@ -34,6 +34,7 @@
 #include <boost/shared_ptr.hpp>
 
 #include <boost/uuid/uuid.hpp>
+#include <boost/uuid/nil_generator.hpp>
 
 namespace ros
 {
@@ -60,7 +61,7 @@ public:
   , num_bytes(0)
   , message_start(0)
   , type_info(0)
-  , uuid({{0}})
+  , uuid(boost::uuids::nil_uuid())
   {}
 
   SerializedMessage(boost::shared_array<uint8_t> buf, size_t num_bytes)
@@ -68,12 +69,12 @@ public:
   , num_bytes(num_bytes)
   , message_start(buf ? buf.get() : 0)
   , type_info(0)
-  , uuid({{0}})
+  , uuid(boost::uuids::nil_uuid())
   { }
 
   SerializedMessage(boost::shared_ptr<MemfdMessage> memfd_message)
   : memfd_message(memfd_message)
-  , uuid({{0}})
+  , uuid(boost::uuids::nil_uuid())
   { }
 };
 
