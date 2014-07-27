@@ -31,6 +31,7 @@
 
 #include "ros/time.h"
 #include <ros/message_traits.h>
+#include "message_factory.h"
 
 #include <boost/type_traits/is_void.hpp>
 #include <boost/type_traits/is_base_of.hpp>
@@ -40,6 +41,12 @@
 #include <boost/utility/enable_if.hpp>
 #include <boost/function.hpp>
 #include <boost/make_shared.hpp>
+
+#include <boost/interprocess/managed_shared_memory.hpp>
+#include <boost/interprocess/smart_ptr/deleter.hpp>
+#include <boost/interprocess/smart_ptr/shared_ptr.hpp>
+
+#include <boost/uuid/uuid.hpp>
 
 namespace ros
 {
@@ -247,7 +254,214 @@ private:
   static const std::string s_unknown_publisher_string_;
 };
 
+template<typename M>
+class MessageEvent2
+{
+public:
+  typedef typename boost::add_const<M>::type ConstMessage;
+  typedef typename boost::remove_const<M>::type Message;
+
+  typedef boost::interprocess::managed_shared_memory::segment_manager segment_manager_type;
+  typedef boost::interprocess::ros_allocator< void, segment_manager_type> void_allocator_type;
+
+  typedef boost::interprocess::shared_ptr<M, void_allocator_type, boost::interprocess::deleter< Message, segment_manager_type> > MessagePtr;
+  typedef boost::interprocess::shared_ptr<M, void_allocator_type, boost::interprocess::deleter< ConstMessage, segment_manager_type> > ConstMessagePtr;
+  typedef boost::function<MessagePtr()> CreateFunction;
+
+  MessageEvent2()
+  : nonconst_need_copy_(true)
+  {}
+
+  MessageEvent2(const MessageEvent2<Message>& rhs)
+  {
+    *this = rhs;
+  }
+
+  MessageEvent2(const MessageEvent2<ConstMessage>& rhs)
+  {
+    *this = rhs;
+  }
+
+  MessageEvent2(const MessageEvent2<Message>& rhs, bool nonconst_need_copy)
+  {
+    *this = rhs;
+    nonconst_need_copy_ = nonconst_need_copy;
+  }
+
+  MessageEvent2(const MessageEvent2<ConstMessage>& rhs, bool nonconst_need_copy)
+  {
+    *this = rhs;
+    nonconst_need_copy_ = nonconst_need_copy;
+  }
+
+  MessageEvent2(const MessageEvent2<void const>& rhs, const CreateFunction& create)
+  {
+    init2(rhs.getUuid(), rhs.getConnectionHeaderPtr(), rhs.getReceiptTime(), rhs.nonConstWillCopy(), create);
+  }
+
+  /**
+   * \todo Make this explicit in ROS 2.0.  Keep as auto-converting for now to maintain backwards compatibility in some places (message_filters)
+   */
+  MessageEvent2(const ConstMessagePtr& message)
+  {
+    init(message, boost::shared_ptr<M_string>(), ros::Time::now(), true, ros::DefaultMessageCreator<Message>());
+  }
+
+  MessageEvent2(const ConstMessagePtr& message, const boost::shared_ptr<M_string>& connection_header, ros::Time receipt_time)
+  {
+    init(message, connection_header, receipt_time, true, ros::DefaultMessageCreator<Message>());
+  }
+
+  MessageEvent2(const ConstMessagePtr& message, ros::Time receipt_time)
+  {
+    init(message, boost::shared_ptr<M_string>(), receipt_time, true, ros::DefaultMessageCreator<Message>());
+  }
+
+  MessageEvent2(const boost::uuids::uuid& uuid, const boost::shared_ptr<M_string>& connection_header, ros::Time receipt_time, bool nonconst_need_copy, const CreateFunction& create)
+  {
+    init2(uuid, connection_header, receipt_time, nonconst_need_copy, create);
+  }
+
+  void init2(const boost::uuids::uuid& uuid, const boost::shared_ptr<M_string>& connection_header, ros::Time receipt_time, bool nonconst_need_copy, const CreateFunction& create)
+  {
+    uuid_ = uuid;
+    connection_header_ = connection_header;
+    receipt_time_ = receipt_time;
+    nonconst_need_copy_ = nonconst_need_copy;
+    create_ = create;
+  }
+
+  // deprecated!
+  void init(const ConstMessagePtr& message, const boost::shared_ptr<M_string>& connection_header, ros::Time receipt_time, bool nonconst_need_copy, const CreateFunction& create)
+  {
+    message_ = message;
+    connection_header_ = connection_header;
+    receipt_time_ = receipt_time;
+    nonconst_need_copy_ = nonconst_need_copy;
+    create_ = create;
+  }
+
+  void operator=(const MessageEvent2<Message>& rhs)
+  {
+    init2(rhs.getUuid(), rhs.getConnectionHeaderPtr(), rhs.getReceiptTime(), rhs.nonConstWillCopy(), rhs.getMessageFactory());
+//    init(boost::static_pointer_cast<Message>(rhs.getMessage()), rhs.getConnectionHeaderPtr(), rhs.getReceiptTime(), rhs.nonConstWillCopy(), rhs.getMessageFactory());
+    message_copy_.reset();
+  }
+
+  void operator=(const MessageEvent2<ConstMessage>& rhs)
+  {
+    printf("doing a stupid copy...\n");
+    init2(rhs.getUuid(), rhs.getConnectionHeaderPtr(), rhs.getReceiptTime(), rhs.nonConstWillCopy(), rhs.getMessageFactory());
+    message_copy_.reset();
+  }
+
+  /**
+   * \brief Retrieve the message.  If M is const, this returns a reference to it.  If M is non const
+   * and this event requires it, returns a copy.  Note that it caches this copy for later use, so it will
+   * only every make the copy once
+   */
+  boost::interprocess::shared_ptr<M, void_allocator_type, boost::interprocess::deleter< M, segment_manager_type> > getMessage() const
+  {
+    return copyMessageIfNecessary<M>();
+  }
+
+
+  /**
+   * \brief Retrieve a const version of the message
+   */
+  const ConstMessagePtr& getConstMessage() const { return message_; }
+  /**
+   * \brief Retrieve the connection header
+   */
+  M_string& getConnectionHeader() const { return *connection_header_; }
+  const boost::shared_ptr<M_string>& getConnectionHeaderPtr() const { return connection_header_; }
+
+  /**
+   * \brief Returns the name of the node which published this message
+   */
+  const std::string& getPublisherName() const { return connection_header_ ? (*connection_header_)["callerid"] : s_unknown_publisher_string_; }
+
+  boost::uuids::uuid getUuid() const { return uuid_; }
+
+  /**
+   * \brief Returns the time at which this message was received
+   */
+  ros::Time getReceiptTime() const { return receipt_time_; }
+
+  bool nonConstWillCopy() const { return nonconst_need_copy_; }
+  bool getMessageWillCopy() const { return !boost::is_const<M>::value && nonconst_need_copy_; }
+
+  bool operator<(const MessageEvent2<M>& rhs)
+  {
+    if (message_ != rhs.message_)
+    {
+      return message_ < rhs.message_;
+    }
+
+    if (receipt_time_ != rhs.receipt_time_)
+    {
+      return receipt_time_ < rhs.receipt_time_;
+    }
+
+    return nonconst_need_copy_ < rhs.nonconst_need_copy_;
+  }
+
+  bool operator==(const MessageEvent2<M>& rhs)
+  {
+    return message_ = rhs.message_ && receipt_time_ == rhs.receipt_time_ && nonconst_need_copy_ == rhs.nonconst_need_copy_;
+  }
+
+  bool operator!=(const MessageEvent2<M>& rhs)
+  {
+    return !(*this == rhs);
+  }
+
+  const CreateFunction& getMessageFactory() const { return create_; }
+
+private:
+  template<typename M2>
+  typename boost::disable_if<boost::is_void<M2>, boost::interprocess::shared_ptr<M, void_allocator_type, boost::interprocess::deleter< M, segment_manager_type> > >::type copyMessageIfNecessary() const
+  {
+    message_copy_ = MessageFactory::getSharedMessage<Message>(uuid_);
+/*
+    if (boost::is_const<M>::value || !nonconst_need_copy_)
+    {
+      return boost::const_pointer_cast<Message>(message_);
+    }
+
+    if (message_copy_)
+    {
+      return message_copy_;
+    }
+
+    ROS_ASSERT(create_);
+    message_copy_ = create_();
+    *message_copy_ = *message_;
+*/
+    return message_copy_;
+  }
+
+  template<typename M2>
+  typename boost::enable_if<boost::is_void<M2>, boost::interprocess::shared_ptr<M, void_allocator_type, boost::interprocess::deleter< M, segment_manager_type> > >::type copyMessageIfNecessary() const
+  {
+//    return boost::const_pointer_cast<Message>(message_);
+    return message_copy_;
+  }
+
+  boost::uuids::uuid uuid_;
+  ConstMessagePtr message_;
+  // Kind of ugly to make this mutable, but it means we can pass a const MessageEvent to a callback and not worry about other things being modified
+  mutable MessagePtr message_copy_;
+  boost::shared_ptr<M_string> connection_header_;
+  ros::Time receipt_time_;
+  bool nonconst_need_copy_;
+  CreateFunction create_;
+
+  static const std::string s_unknown_publisher_string_;
+};
+
 template<typename M> const std::string MessageEvent<M>::s_unknown_publisher_string_("unknown_publisher");
+template<typename M> const std::string MessageEvent2<M>::s_unknown_publisher_string_("unknown_publisher");
 
 
 }
