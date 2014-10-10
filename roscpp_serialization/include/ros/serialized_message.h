@@ -36,6 +36,8 @@
 namespace ros
 {
 
+class MemfdMessage;
+
 class ROSCPP_SERIALIZATION_DECL SerializedMessage
 {
 public:
@@ -44,6 +46,7 @@ public:
   uint8_t* message_start;
 
   boost::shared_ptr<void const> message;
+  boost::shared_ptr<MemfdMessage> memfd_message;
   const std::type_info* type_info;
 
   SerializedMessage()
@@ -57,6 +60,14 @@ public:
   : buf(buf)
   , num_bytes(num_bytes)
   , message_start(buf ? buf.get() : 0)
+  , type_info(0)
+  { }
+
+  SerializedMessage(boost::shared_ptr<MemfdMessage> memfd_message)
+  : buf(boost::shared_array<uint8_t>())
+  , num_bytes(0)
+  , message_start(0)
+  , memfd_message(memfd_message)
   , type_info(0)
   { }
 };
