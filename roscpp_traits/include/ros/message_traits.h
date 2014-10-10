@@ -111,6 +111,11 @@ template<typename M> struct HasHeader : public FalseType {};
 template<typename M> struct IsMessage : public FalseType {};
 
 /**
+ * \brief Can this message be used in shared memory?
+ */
+template<typename M> struct IsShmemReady : public FalseType {};
+
+/**
  * \brief Specialize to provide the md5sum for a message
  */
 template<typename M>
